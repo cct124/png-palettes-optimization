@@ -1,3 +1,7 @@
+mod command;
+mod error;
+mod optimization;
+
 fn main() {
-    println!("Hello, world!");
+    command::args_handle();
 }
