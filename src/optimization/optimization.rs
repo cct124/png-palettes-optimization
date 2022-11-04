@@ -2,6 +2,11 @@ use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io;
 use std::path::Path;
+use std::thread::available_parallelism;
+
+use crate::thread::{ThreadPool, WorkStatus};
+
+use super::Pngquant;
 
 #[derive(Debug)]
 pub struct Optimization<'a> {
@@ -18,7 +23,11 @@ pub struct Optimization<'a> {
     // 文件扩展名，用于检测png文件
     extension: &'a [&'a str],
     // 扫描到的png文件路径都保存到这里
-    pngs_path: Vec<DirEntry>,
+    worklist: Vec<Work>,
+    // 并行资源
+    available_parallelism: usize,
+    thread_pool: ThreadPool,
+    end_num: usize,
 }
 
 impl<'a> Optimization<'a> {
@@ -28,13 +37,18 @@ impl<'a> Optimization<'a> {
         quality_min: Option<u8>,
         quality_max: Option<u8>,
     ) -> Optimization {
+        let available_parallelism = available_parallelism().unwrap().get();
+        let thread_pool = ThreadPool::new(available_parallelism);
         Optimization {
             path,
             speed,
             quality_min,
             quality_max,
             extension: &["png"],
-            pngs_path: vec![],
+            worklist: vec![],
+            available_parallelism,
+            thread_pool,
+            end_num: 0,
         }
     }
 
@@ -58,9 +72,13 @@ impl<'a> Optimization<'a> {
     }
 
     /// 遍历目录查找png图片
-    fn iterate_pngs(&self, entry: DirEntry, paths: &mut Vec<DirEntry>) {
+    fn iterate_pngs(&self, entry: DirEntry, paths: &mut Vec<Work>) {
         if self.has_extension(&entry.path()) {
-            paths.push(entry)
+            paths.push(Work {
+                id: paths.len(),
+                path: entry,
+                status: WorkStatus::INIT,
+            })
         }
     }
 
@@ -76,11 +94,64 @@ impl<'a> Optimization<'a> {
         false
     }
 
-    /// 优化图片
-    pub fn quality(&mut self) {
-        let mut paths: Vec<DirEntry> = vec![];
+    //生成工作列表
+    fn generate_worklist(&mut self) {
+        let mut paths: Vec<Work> = vec![];
         self.visit_dirs(self.path, &mut |entry| self.iterate_pngs(entry, &mut paths))
             .unwrap();
-        self.pngs_path = paths;
+        self.worklist = paths;
     }
+
+    fn run_worklist(&mut self) {
+        loop {
+            for work in self.worklist.iter_mut() {
+                if let WorkStatus::INIT = work.status {
+                    work.status = WorkStatus::WAIT;
+                    let path = work.path.path();
+                    let speed = self.speed;
+                    let quality_max = self.quality_max;
+                    let quality_min = self.quality_min;
+                    self.thread_pool.execute(
+                        move || {
+                            if let Ok(pngquant) =
+                                Pngquant::new(&path, speed, quality_min, quality_max)
+                            {
+                                println!(
+                                    "
+                                    {:?}
+                                    ",
+                                    pngquant.path
+                                );
+                            }
+                        },
+                        work.id,
+                    )
+                }
+            }
+            if let Ok(status) = self.thread_pool.status_receiver.try_recv() {
+                let work = self.worklist.iter_mut().find(|work| work.id == status.id);
+                if let Some(work) = work {
+                    work.status = WorkStatus::End;
+                    self.end_num += 1;
+                }
+            };
+
+            if self.worklist.len() == self.end_num {
+                break;
+            }
+        }
+    }
+
+    /// 优化图片
+    pub fn quality(&mut self) {
+        self.generate_worklist();
+        self.run_worklist();
+    }
+}
+
+#[derive(Debug)]
+struct Work {
+    id: usize,
+    path: DirEntry,
+    status: WorkStatus,
 }

@@ -31,7 +31,6 @@ struct Args {
  */
 pub fn args_handle<'a>() {
     let args = Args::parse();
-    println!("{:?}", args);
 
     let path = if let Some(path) = args.path {
         path
@@ -46,5 +45,5 @@ pub fn args_handle<'a>() {
         args.quality_max,
     );
     optimization.quality();
-    println!("{:?}", optimization);
+    // println!("{:?}", optimization);
 }

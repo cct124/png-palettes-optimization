@@ -6,7 +6,7 @@ use super::Frame;
 use crate::error::Error;
 
 pub struct Pngquant<'a> {
-    path: &'a Path,
+    pub path: &'a Path,
     reader: Reader<File>,
     bytes: Option<Vec<imagequant::RGBA>>,
     frames: Option<Vec<Frame>>,
@@ -14,7 +14,12 @@ pub struct Pngquant<'a> {
 }
 
 impl<'a> Pngquant<'a> {
-    pub fn new(path: &'a Path) -> Result<Pngquant, Error> {
+    pub fn new(
+        path: &'a Path,
+        speed: Option<u8>,
+        quality_min: Option<u8>,
+        quality_max: Option<u8>,
+    ) -> Result<Pngquant, Error> {
         let decoder = Decoder::new(File::open(path).unwrap());
         let reader = decoder.read_info().unwrap();
         let info = reader.info();
@@ -24,7 +29,13 @@ impl<'a> Pngquant<'a> {
                 if info.is_animated() {
                     Ok(Pngquant::decoder_rgba_png(path, reader))
                 } else {
-                    Ok(Pngquant::decoder_rgba_apng(path, reader))
+                    Ok(Pngquant::decoder_rgba_apng(
+                        path,
+                        reader,
+                        speed,
+                        quality_min,
+                        quality_max,
+                    ))
                 }
             }
             ColorType::Indexed => Err(Error::UnsupportedColorMode),
@@ -45,11 +56,28 @@ impl<'a> Pngquant<'a> {
         }
     }
 
-    fn decoder_rgba_apng(path: &'a Path, mut reader: Reader<File>) -> Pngquant {
+    fn decoder_rgba_apng(
+        path: &'a Path,
+        mut reader: Reader<File>,
+        speed: Option<u8>,
+        quality_min: Option<u8>,
+        quality_max: Option<u8>,
+    ) -> Pngquant {
         let mut frames: Vec<Frame> = vec![];
         let mut attr = imagequant::new();
-        attr.set_speed(1).unwrap();
-        attr.set_quality(20, 100).unwrap();
+        if let Some(speed) = speed {
+            attr.set_speed(speed as i32).unwrap();
+        }
+
+        match (quality_min, quality_max) {
+            (Some(quality_min), Some(quality_max)) => {
+                attr.set_quality(quality_min, quality_max).unwrap()
+            }
+            (Some(quality_min), None) => attr.set_quality(quality_min, 100).unwrap(),
+            (None, Some(quality_max)) => attr.set_quality(0, quality_max).unwrap(),
+            _ => {}
+        }
+
         let mut histogram = imagequant::Histogram::new(&attr);
         loop {
             let mut buf = vec![0; reader.output_buffer_size()];
