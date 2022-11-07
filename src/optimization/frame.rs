@@ -12,6 +12,7 @@ pub struct Frame {
     pub delay_den: u16,
     pub dispose_op: png::DisposeOp,
     pub blend_op: png::BlendOp,
+    pub pixels: Option<Vec<u8>>,
 }
 
 impl Frame {
@@ -36,6 +37,7 @@ impl Frame {
             delay_den,
             dispose_op,
             blend_op,
+            pixels: None,
         }
     }
 }

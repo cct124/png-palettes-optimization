@@ -1,6 +1,6 @@
 use imagequant::Histogram;
 use png::{ColorType, Decoder, Reader};
-use std::{fs::File, path::Path};
+use std::{fs::File, io::BufWriter, path::Path};
 
 use super::Frame;
 use crate::error::Error;
@@ -11,6 +11,9 @@ pub struct Pngquant<'a> {
     bytes: Option<Vec<imagequant::RGBA>>,
     frames: Option<Vec<Frame>>,
     histogram: Option<Histogram>,
+    imagequant_attr: Option<imagequant::Attributes>,
+    apng_def_quality_max: u8,
+    dithering_level: Option<f32>,
 }
 
 impl<'a> Pngquant<'a> {
@@ -19,22 +22,30 @@ impl<'a> Pngquant<'a> {
         speed: Option<u8>,
         quality_min: Option<u8>,
         quality_max: Option<u8>,
+        dithering_level: Option<f32>,
     ) -> Result<Pngquant, Error> {
         let decoder = Decoder::new(File::open(path).unwrap());
         let reader = decoder.read_info().unwrap();
         let info = reader.info();
-
+        let apng_def_quality_max: u8 = 50;
         match info.color_type {
             ColorType::Rgba => {
                 if info.is_animated() {
-                    Ok(Pngquant::decoder_rgba_png(path, reader))
-                } else {
                     Ok(Pngquant::decoder_rgba_apng(
                         path,
                         reader,
                         speed,
                         quality_min,
                         quality_max,
+                        apng_def_quality_max,
+                        dithering_level,
+                    ))
+                } else {
+                    Ok(Pngquant::decoder_rgba_png(
+                        path,
+                        reader,
+                        apng_def_quality_max,
+                        dithering_level,
                     ))
                 }
             }
@@ -43,7 +54,12 @@ impl<'a> Pngquant<'a> {
         }
     }
 
-    fn decoder_rgba_png(path: &'a Path, mut reader: Reader<File>) -> Pngquant {
+    fn decoder_rgba_png(
+        path: &'a Path,
+        mut reader: Reader<File>,
+        apng_def_quality_max: u8,
+        dithering_level: Option<f32>,
+    ) -> Pngquant {
         let mut buf = vec![0; reader.output_buffer_size()];
         let output_info = reader.next_frame(&mut buf).unwrap();
         let bytes = Some(rgb::FromSlice::as_rgba(&buf[..output_info.buffer_size()]).to_vec());
@@ -53,6 +69,9 @@ impl<'a> Pngquant<'a> {
             bytes,
             frames: None,
             histogram: None,
+            imagequant_attr: None,
+            apng_def_quality_max,
+            dithering_level,
         }
     }
 
@@ -62,6 +81,8 @@ impl<'a> Pngquant<'a> {
         speed: Option<u8>,
         quality_min: Option<u8>,
         quality_max: Option<u8>,
+        apng_def_quality_max: u8,
+        dithering_level: Option<f32>,
     ) -> Pngquant {
         let mut frames: Vec<Frame> = vec![];
         let mut attr = imagequant::new();
@@ -73,8 +94,11 @@ impl<'a> Pngquant<'a> {
             (Some(quality_min), Some(quality_max)) => {
                 attr.set_quality(quality_min, quality_max).unwrap()
             }
-            (Some(quality_min), None) => attr.set_quality(quality_min, 100).unwrap(),
+            (Some(quality_min), None) => {
+                attr.set_quality(quality_min, apng_def_quality_max).unwrap()
+            }
             (None, Some(quality_max)) => attr.set_quality(0, quality_max).unwrap(),
+            (None, None) => attr.set_quality(0, apng_def_quality_max).unwrap(),
             _ => {}
         }
 
@@ -97,7 +121,6 @@ impl<'a> Pngquant<'a> {
                         control.blend_op,
                     );
                     let pixels = rgb::FromSlice::as_rgba(bytes);
-                    // merge.extend_from_slice(pixels);
                     let mut image = imagequant::Image::new_borrowed(
                         &attr,
                         pixels,
@@ -120,6 +143,164 @@ impl<'a> Pngquant<'a> {
             bytes: None,
             frames: Some(frames),
             histogram: Some(histogram),
+            imagequant_attr: Some(attr),
+            apng_def_quality_max,
+            dithering_level,
         }
+    }
+
+    pub fn encoder(
+        &mut self,
+        path: &Path,
+        speed: Option<u8>,
+        quality_min: Option<u8>,
+        quality_max: Option<u8>,
+    ) {
+        if let Some(bytes) = &self.bytes {
+            self.encoder_png(bytes, path, speed, quality_min, quality_max)
+        }
+        if let Some(_) = &self.frames {
+            self.encoder_apng(path)
+        }
+    }
+
+    fn encoder_apng(&mut self, path: &Path) {
+        if let (Some(histogram), Some(attr), Some(frames)) = (
+            self.histogram.as_mut(),
+            &self.imagequant_attr,
+            self.frames.as_mut(),
+        ) {
+            let mut res = histogram.quantize(&attr).unwrap();
+            res.set_dithering_level(self.dithering_level.unwrap())
+                .unwrap();
+
+            let mut histogram_palette: Vec<imagequant::RGBA> = vec![];
+
+            for frame in frames.iter_mut() {
+                let pixels = rgb::FromSlice::as_rgba(&frame.data[..]);
+                let mut image = imagequant::Image::new_borrowed(
+                    &attr,
+                    pixels,
+                    frame.width as usize,
+                    frame.height as usize,
+                    0.0,
+                )
+                .unwrap();
+                let (palette, pixels) = res.remapped(&mut image).unwrap();
+                if histogram_palette.len() == 0 {
+                    histogram_palette = palette;
+                }
+                frame.pixels = Some(pixels);
+            }
+
+            let mut rbg_palette: Vec<u8> = Vec::new();
+            let mut trns: Vec<u8> = Vec::new();
+
+            for f in histogram_palette.iter() {
+                rbg_palette.push(f.r);
+                rbg_palette.push(f.g);
+                rbg_palette.push(f.b);
+                trns.push(f.a);
+            }
+
+            let info = self.reader.info();
+
+            let file = File::create(path).unwrap();
+            let ref mut w = BufWriter::new(file);
+
+            let mut encoder = png::Encoder::new(w, info.width, info.height); // Width is 2 pixels and height is 1.
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_color(png::ColorType::Indexed);
+            encoder.set_trns(trns);
+            encoder.set_palette(rbg_palette);
+
+            if let Some(animation) = info.animation_control {
+                encoder
+                    .set_animated(animation.num_frames, animation.num_plays)
+                    .unwrap();
+                let mut writer = encoder.write_header().unwrap();
+
+                for frame in frames.iter() {
+                    if let Some(pixels) = &frame.pixels {
+                        writer.reset_frame_position().unwrap();
+                        writer
+                            .set_frame_dimension(frame.width, frame.height)
+                            .unwrap();
+                        writer
+                            .set_frame_position(frame.x_offset, frame.y_offset)
+                            .unwrap();
+                        writer
+                            .set_frame_delay(frame.delay_num, frame.delay_den)
+                            .unwrap();
+                        writer.set_blend_op(frame.blend_op).unwrap();
+                        writer.set_dispose_op(frame.dispose_op).unwrap();
+                        writer.write_image_data(&pixels).unwrap(); // Save
+                    }
+                }
+            }
+        }
+    }
+
+    fn encoder_png(
+        &self,
+        bytes: &Vec<imagequant::RGBA>,
+        path: &Path,
+        speed: Option<u8>,
+        quality_min: Option<u8>,
+        quality_max: Option<u8>,
+    ) {
+        let info = self.reader.info();
+        let mut attr = imagequant::new();
+        if let Some(speed) = speed {
+            attr.set_speed(speed as i32).unwrap();
+        }
+        match (quality_min, quality_max) {
+            (Some(quality_min), Some(quality_max)) => {
+                attr.set_quality(quality_min, quality_max).unwrap()
+            }
+            (Some(quality_min), None) => attr.set_quality(quality_min, 100).unwrap(),
+            (None, Some(quality_max)) => attr.set_quality(0, quality_max).unwrap(),
+            _ => {}
+        }
+
+        // Describe the bitmap
+        let mut img = attr
+            .new_image(&bytes[..], info.width as usize, info.height as usize, 0.0)
+            .unwrap();
+
+        // The magic happens in quantize()
+        let mut res = match attr.quantize(&mut img) {
+            Ok(res) => res,
+            Err(err) => panic!("Quantization failed, because: {:?}", err),
+        };
+
+        // Enable dithering for subsequent remappings
+        res.set_dithering_level(self.dithering_level.unwrap())
+            .unwrap();
+
+        // You can reuse the result to generate several images with the same palette
+        let (palette, pixels) = res.remapped(&mut img).unwrap();
+
+        let mut rbg_palette: Vec<u8> = Vec::new();
+        let mut trns: Vec<u8> = Vec::new();
+
+        for f in palette.iter() {
+            rbg_palette.push(f.r);
+            rbg_palette.push(f.g);
+            rbg_palette.push(f.b);
+            trns.push(f.a);
+        }
+
+        let file = File::create(path).unwrap();
+        let ref mut w = BufWriter::new(file);
+
+        let mut encoder = png::Encoder::new(w, info.width, info.height); // Width is 2 pixels and height is 1.
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_color(png::ColorType::Indexed);
+        encoder.set_trns(trns);
+        encoder.set_palette(rbg_palette);
+
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&pixels).unwrap(); // Save
     }
 }

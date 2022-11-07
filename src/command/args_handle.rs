@@ -19,11 +19,22 @@ struct Args {
     )]
     speed: Option<u8>,
 
-    #[arg(long, help = "0-100，优化的最低质量，默认最低 0，不能高于最大值")]
+    #[arg(
+        short = 'n',
+        long,
+        help = "0-100，优化的最低质量，默认最低 0，不能高于最大值"
+    )]
     quality_min: Option<u8>,
 
-    #[arg(long, help = "0-100，优化的最大质量，默认最高100，不能低于最小值")]
+    #[arg(
+        short = 'x',
+        long,
+        help = "0-100，优化的最大质量，默认最高100，不能低于最小值"
+    )]
     quality_max: Option<u8>,
+
+    #[arg(short = 'd', long, help = "设置为1.0可获得漂亮的平滑图像，默认 1.0")]
+    dithering_level: Option<f32>,
 }
 
 /**
@@ -43,6 +54,7 @@ pub fn args_handle<'a>() {
         args.speed,
         args.quality_min,
         args.quality_max,
+        args.dithering_level,
     );
     optimization.quality();
     // println!("{:?}", optimization);

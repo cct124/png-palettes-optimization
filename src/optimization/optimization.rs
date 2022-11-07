@@ -20,12 +20,12 @@ pub struct Optimization<'a> {
     quality_min: Option<u8>,
     /// `0-100`，优化的最大质量，默认最高`100`，不能低于最小值
     quality_max: Option<u8>,
+    /// 设置为1.0可获得漂亮的平滑图像，默认 1.0
+    dithering_level: Option<f32>,
     // 文件扩展名，用于检测png文件
     extension: &'a [&'a str],
     // 扫描到的png文件路径都保存到这里
     worklist: Vec<Work>,
-    // 并行资源
-    available_parallelism: usize,
     thread_pool: ThreadPool,
     end_num: usize,
 }
@@ -36,7 +36,9 @@ impl<'a> Optimization<'a> {
         speed: Option<u8>,
         quality_min: Option<u8>,
         quality_max: Option<u8>,
+        dithering_level: Option<f32>,
     ) -> Optimization {
+        // 并行资源
         let available_parallelism = available_parallelism().unwrap().get();
         let thread_pool = ThreadPool::new(available_parallelism);
         Optimization {
@@ -46,9 +48,9 @@ impl<'a> Optimization<'a> {
             quality_max,
             extension: &["png"],
             worklist: vec![],
-            available_parallelism,
             thread_pool,
             end_num: 0,
+            dithering_level: Some(dithering_level.unwrap_or(1.0)),
         }
     }
 
@@ -111,17 +113,19 @@ impl<'a> Optimization<'a> {
                     let speed = self.speed;
                     let quality_max = self.quality_max;
                     let quality_min = self.quality_min;
+                    let dithering_level = self.dithering_level;
                     self.thread_pool.execute(
                         move || {
-                            if let Ok(pngquant) =
-                                Pngquant::new(&path, speed, quality_min, quality_max)
+                            if let Ok(pngquant) = Pngquant::new(
+                                &path,
+                                speed,
+                                quality_min,
+                                quality_max,
+                                dithering_level,
+                            )
+                            .as_mut()
                             {
-                                println!(
-                                    "
-                                    {:?}
-                                    ",
-                                    pngquant.path
-                                );
+                                pngquant.encoder(pngquant.path, speed, quality_min, quality_max);
                             }
                         },
                         work.id,
