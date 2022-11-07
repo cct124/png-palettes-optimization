@@ -1,6 +1,13 @@
 use crate::optimization::Optimization;
 use clap::Parser;
-use std::{env, path::Path};
+use std::{env, path::PathBuf};
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum Compression {
+    Default,
+    Fast,
+    Equal,
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -10,7 +17,7 @@ struct Args {
         long,
         help = "要进行压缩png图的文件夹路径，传入当前工作路径的相对路径。 默认当前工作路径"
     )]
-    path: Option<String>,
+    path: Option<PathBuf>,
 
     #[arg(
         short = 's',
@@ -35,27 +42,45 @@ struct Args {
 
     #[arg(short = 'd', long, help = "设置为1.0可获得漂亮的平滑图像，默认 1.0")]
     dithering_level: Option<f32>,
+
+    #[arg(
+        short = 'c',
+        long,
+        help = "施加压缩的类型和强度，三种类型default、fast、equal，默认default，最好的压缩但时间会更长"
+    )]
+    compression: Option<Compression>,
 }
 
 /**
  * # 处理命令行参数
  */
 pub fn args_handle<'a>() {
+    // 获取命令行参数
     let args = Args::parse();
 
+    // 获取工作路径
     let path = if let Some(path) = args.path {
         path
     } else {
-        env::current_dir().unwrap().to_string_lossy().to_string()
+        env::current_dir().unwrap()
     };
 
+    // 设置压缩等级
+    let compression = match args.compression {
+        Some(Compression::Fast) => png::Compression::Fast,
+        Some(Compression::Equal) => png::Compression::Best,
+        (_) => png::Compression::Best,
+    };
+
+    // 实例化优化结构体
     let mut optimization = Optimization::new(
-        Path::new(&path),
+        &path,
         args.speed,
         args.quality_min,
         args.quality_max,
         args.dithering_level,
+        compression,
     );
+    // 优化压缩png图像
     optimization.quality();
-    // println!("{:?}", optimization);
 }

@@ -1,18 +1,24 @@
 use imagequant::Histogram;
-use png::{ColorType, Decoder, Reader};
+use png::{ColorType, Compression, Decoder, Reader};
 use std::{fs::File, io::BufWriter, path::Path};
 
 use super::Frame;
 use crate::error::Error;
 
+/// PNG优化结构体
 pub struct Pngquant<'a> {
+    /// png文件路径
     pub path: &'a Path,
     reader: Reader<File>,
+    /// 图像数据
     bytes: Option<Vec<imagequant::RGBA>>,
+    /// apng 帧数据
     frames: Option<Vec<Frame>>,
     histogram: Option<Histogram>,
     imagequant_attr: Option<imagequant::Attributes>,
-    apng_def_quality_max: u8,
+    /// 默认优化的最大质量
+    def_quality_max: u8,
+    /// 平滑图像参数
     dithering_level: Option<f32>,
 }
 
@@ -27,9 +33,11 @@ impl<'a> Pngquant<'a> {
         let decoder = Decoder::new(File::open(path).unwrap());
         let reader = decoder.read_info().unwrap();
         let info = reader.info();
-        let apng_def_quality_max: u8 = 50;
+        let def_quality_max: u8 = 60;
+        // 根据颜色模式实例化不同的优化结构体，目前只支持优化Rgba模式的png图像
         match info.color_type {
             ColorType::Rgba => {
+                // 是否是apng
                 if info.is_animated() {
                     Ok(Pngquant::decoder_rgba_apng(
                         path,
@@ -37,27 +45,28 @@ impl<'a> Pngquant<'a> {
                         speed,
                         quality_min,
                         quality_max,
-                        apng_def_quality_max,
+                        def_quality_max,
                         dithering_level,
                     ))
                 } else {
                     Ok(Pngquant::decoder_rgba_png(
                         path,
                         reader,
-                        apng_def_quality_max,
+                        def_quality_max,
                         dithering_level,
                     ))
                 }
             }
-            ColorType::Indexed => Err(Error::UnsupportedColorMode),
+            // ColorType::Indexed => Err(Error::UnsupportedColorMode),
             _ => Err(Error::UnsupportedColorMode),
         }
     }
 
+    /// 解码rgba的图像数据
     fn decoder_rgba_png(
         path: &'a Path,
         mut reader: Reader<File>,
-        apng_def_quality_max: u8,
+        def_quality_max: u8,
         dithering_level: Option<f32>,
     ) -> Pngquant {
         let mut buf = vec![0; reader.output_buffer_size()];
@@ -70,35 +79,37 @@ impl<'a> Pngquant<'a> {
             frames: None,
             histogram: None,
             imagequant_attr: None,
-            apng_def_quality_max,
+            def_quality_max,
             dithering_level,
         }
     }
 
+    /// 解码rgba的apng图像数据
     fn decoder_rgba_apng(
         path: &'a Path,
         mut reader: Reader<File>,
         speed: Option<u8>,
         quality_min: Option<u8>,
         quality_max: Option<u8>,
-        apng_def_quality_max: u8,
+        def_quality_max: u8,
         dithering_level: Option<f32>,
     ) -> Pngquant {
         let mut frames: Vec<Frame> = vec![];
+        // 因为要为多个图像生成一个共享调色板，所以要提前生成
         let mut attr = imagequant::new();
+
         if let Some(speed) = speed {
             attr.set_speed(speed as i32).unwrap();
         }
 
+        // 默认质量的参数设置
         match (quality_min, quality_max) {
             (Some(quality_min), Some(quality_max)) => {
                 attr.set_quality(quality_min, quality_max).unwrap()
             }
-            (Some(quality_min), None) => {
-                attr.set_quality(quality_min, apng_def_quality_max).unwrap()
-            }
+            (Some(quality_min), None) => attr.set_quality(quality_min, def_quality_max).unwrap(),
             (None, Some(quality_max)) => attr.set_quality(0, quality_max).unwrap(),
-            (None, None) => attr.set_quality(0, apng_def_quality_max).unwrap(),
+            (None, None) => attr.set_quality(0, def_quality_max).unwrap(),
             _ => {}
         }
 
@@ -144,7 +155,7 @@ impl<'a> Pngquant<'a> {
             frames: Some(frames),
             histogram: Some(histogram),
             imagequant_attr: Some(attr),
-            apng_def_quality_max,
+            def_quality_max,
             dithering_level,
         }
     }
@@ -155,16 +166,17 @@ impl<'a> Pngquant<'a> {
         speed: Option<u8>,
         quality_min: Option<u8>,
         quality_max: Option<u8>,
+        compression: Compression,
     ) {
         if let Some(bytes) = &self.bytes {
-            self.encoder_png(bytes, path, speed, quality_min, quality_max)
+            self.encoder_png(bytes, path, speed, quality_min, quality_max, compression)
         }
         if let Some(_) = &self.frames {
-            self.encoder_apng(path)
+            self.encoder_apng(path, compression)
         }
     }
 
-    fn encoder_apng(&mut self, path: &Path) {
+    fn encoder_apng(&mut self, path: &Path, compression: Compression) {
         if let (Some(histogram), Some(attr), Some(frames)) = (
             self.histogram.as_mut(),
             &self.imagequant_attr,
@@ -210,6 +222,7 @@ impl<'a> Pngquant<'a> {
 
             let mut encoder = png::Encoder::new(w, info.width, info.height); // Width is 2 pixels and height is 1.
             encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_compression(compression);
             encoder.set_color(png::ColorType::Indexed);
             encoder.set_trns(trns);
             encoder.set_palette(rbg_palette);
@@ -248,6 +261,7 @@ impl<'a> Pngquant<'a> {
         speed: Option<u8>,
         quality_min: Option<u8>,
         quality_max: Option<u8>,
+        compression: Compression,
     ) {
         let info = self.reader.info();
         let mut attr = imagequant::new();
@@ -258,8 +272,11 @@ impl<'a> Pngquant<'a> {
             (Some(quality_min), Some(quality_max)) => {
                 attr.set_quality(quality_min, quality_max).unwrap()
             }
-            (Some(quality_min), None) => attr.set_quality(quality_min, 100).unwrap(),
+            (Some(quality_min), None) => {
+                attr.set_quality(quality_min, self.def_quality_max).unwrap()
+            }
             (None, Some(quality_max)) => attr.set_quality(0, quality_max).unwrap(),
+            (None, None) => attr.set_quality(0, self.def_quality_max).unwrap(),
             _ => {}
         }
 
@@ -296,6 +313,7 @@ impl<'a> Pngquant<'a> {
 
         let mut encoder = png::Encoder::new(w, info.width, info.height); // Width is 2 pixels and height is 1.
         encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(compression);
         encoder.set_color(png::ColorType::Indexed);
         encoder.set_trns(trns);
         encoder.set_palette(rbg_palette);

@@ -8,10 +8,14 @@ enum Message {
     Terminate,
 }
 
+/// 工作任务状态
 #[derive(Debug)]
 pub enum WorkStatus {
+    /// 初始化
     INIT,
+    /// 结束
     End,
+    /// 正在执行
     WAIT,
 }
 
