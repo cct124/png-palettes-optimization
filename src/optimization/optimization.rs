@@ -5,6 +5,8 @@ use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io;
 use std::path::Path;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use std::thread::available_parallelism;
 
 #[derive(Debug)]
@@ -89,6 +91,7 @@ impl<'a> Optimization<'a> {
                 id: paths.len(),
                 path: entry,
                 status: WorkStatus::INIT,
+                progress: Arc::new(AtomicUsize::new(0)),
             })
         }
     }
@@ -128,7 +131,7 @@ impl<'a> Optimization<'a> {
                     let quality_min = self.quality_min;
                     let dithering_level = self.dithering_level;
                     let compression = self.compression;
-
+                    let progress = Arc::clone(&work.progress);
                     // 多线程执行工作任务
                     self.thread_pool.execute(
                         move || {
@@ -138,6 +141,7 @@ impl<'a> Optimization<'a> {
                                 quality_min,
                                 quality_max,
                                 dithering_level,
+                                progress,
                             )
                             .as_mut()
                             {
@@ -154,6 +158,12 @@ impl<'a> Optimization<'a> {
                         work.id,
                     )
                 }
+
+                println!(
+                    "{}",
+                    work.get_progress()
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                );
             }
 
             // 检查通道消息，执行工作的线程任务结束后将发消息到此通道
@@ -190,4 +200,12 @@ struct Work {
     path: DirEntry,
     // 工作状态
     status: WorkStatus,
+    // 工作进度
+    progress: Arc<AtomicUsize>,
+}
+
+impl Work {
+    pub fn get_progress(&self) -> &Arc<AtomicUsize> {
+        &self.progress
+    }
 }

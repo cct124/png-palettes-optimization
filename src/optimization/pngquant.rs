@@ -1,6 +1,11 @@
 use imagequant::Histogram;
 use png::{ColorType, Compression, Decoder, Reader};
-use std::{fs::File, io::BufWriter, path::Path};
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::Path,
+    sync::{atomic::AtomicUsize, Arc, Mutex},
+};
 
 use super::Frame;
 use crate::error::Error;
@@ -20,6 +25,7 @@ pub struct Pngquant<'a> {
     def_quality_max: u8,
     /// 平滑图像参数
     dithering_level: Option<f32>,
+    progress: Arc<AtomicUsize>,
 }
 
 impl<'a> Pngquant<'a> {
@@ -29,7 +35,8 @@ impl<'a> Pngquant<'a> {
         quality_min: Option<u8>,
         quality_max: Option<u8>,
         dithering_level: Option<f32>,
-    ) -> Result<Pngquant, Error> {
+        progress: Arc<AtomicUsize>,
+    ) -> Result<Pngquant<'a>, Error> {
         let decoder = Decoder::new(File::open(path).unwrap());
         let reader = decoder.read_info().unwrap();
         let info = reader.info();
@@ -47,6 +54,7 @@ impl<'a> Pngquant<'a> {
                         quality_max,
                         def_quality_max,
                         dithering_level,
+                        progress,
                     ))
                 } else {
                     Ok(Pngquant::decoder_rgba_png(
@@ -54,6 +62,7 @@ impl<'a> Pngquant<'a> {
                         reader,
                         def_quality_max,
                         dithering_level,
+                        progress,
                     ))
                 }
             }
@@ -68,7 +77,8 @@ impl<'a> Pngquant<'a> {
         mut reader: Reader<File>,
         def_quality_max: u8,
         dithering_level: Option<f32>,
-    ) -> Pngquant {
+        progress: Arc<AtomicUsize>,
+    ) -> Pngquant<'a> {
         let mut buf = vec![0; reader.output_buffer_size()];
         let output_info = reader.next_frame(&mut buf).unwrap();
         let bytes = Some(rgb::FromSlice::as_rgba(&buf[..output_info.buffer_size()]).to_vec());
@@ -81,6 +91,7 @@ impl<'a> Pngquant<'a> {
             imagequant_attr: None,
             def_quality_max,
             dithering_level,
+            progress,
         }
     }
 
@@ -93,7 +104,8 @@ impl<'a> Pngquant<'a> {
         quality_max: Option<u8>,
         def_quality_max: u8,
         dithering_level: Option<f32>,
-    ) -> Pngquant {
+        progress: Arc<AtomicUsize>,
+    ) -> Pngquant<'a> {
         let mut frames: Vec<Frame> = vec![];
         // 因为要为多个图像生成一个共享调色板，所以要提前生成
         let mut attr = imagequant::new();
@@ -157,6 +169,7 @@ impl<'a> Pngquant<'a> {
             imagequant_attr: Some(attr),
             def_quality_max,
             dithering_level,
+            progress,
         }
     }
 
@@ -265,6 +278,12 @@ impl<'a> Pngquant<'a> {
     ) {
         let info = self.reader.info();
         let mut attr = imagequant::new();
+        let val = Arc::clone(&self.progress);
+        attr.set_progress_callback(move |progress| {
+            val.fetch_add(progress as usize, std::sync::atomic::Ordering::SeqCst);
+            imagequant::ControlFlow::Continue
+        });
+
         if let Some(speed) = speed {
             attr.set_speed(speed as i32).unwrap();
         }
