@@ -3,7 +3,7 @@ use crate::thread::{ThreadPool, WorkStatus};
 use png::Compression;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
-use std::io;
+use std::io::{self, Write};
 use std::ops::Div;
 use std::path::Path;
 use std::sync::mpsc;
@@ -128,6 +128,9 @@ impl<'a> Optimization<'a> {
     /// 执行数组中的工作任务
     fn run_worklist(&mut self) {
         let (progress_sender, progress_receiver) = mpsc::sync_channel(self.worklist.len());
+        let progress_total = (self.worklist.len() * 100) as f64;
+        let pbstr = "\u{25A0}".repeat(20).to_string();
+        let pbwid = "-".repeat(20).to_string();
 
         // 主线程循环不断检查工作任务状态
         loop {
@@ -189,22 +192,46 @@ impl<'a> Optimization<'a> {
                 if let Some(work) = work {
                     // 改变工作进度
                     work.progress = progress.value.round() as usize;
+                    self.update_progress_bar(progress_total, &pbstr, &pbwid);
                 }
             }
 
             // 判断是否所有任务已完成
             if self.worklist.len() == self.end_num {
+                self.update_progress_bar(progress_total, &pbstr, &pbwid);
+
                 let current_time = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_millis();
 
                 let second: f64 = ((current_time - self.start_time) as f64).div(1000.00);
+                print!("\n");
                 println!("Total time: {}s", second);
+                println!("Complete all work");
                 // 退出循环
                 break;
             }
         }
+    }
+
+    /// 更新进度条
+    fn update_progress_bar(&self, progress_total: f64, pbstr: &String, pbwid: &String) {
+        let current_value = self
+            .worklist
+            .iter()
+            .map(move |f| f.progress)
+            .fold(0, |acc, x| acc + x) as f64;
+        let perc = current_value / progress_total;
+        let lpad = (perc * 20.00).floor();
+
+        print!(
+            "\rProcessing data: {}{} {}%",
+            &pbstr[0..'\u{25A0}'.len_utf8() * (lpad.trunc() as usize)],
+            &pbwid[0..((20.0 - lpad).trunc() as usize)],
+            (perc * 100.0).trunc()
+        );
+        io::stdout().flush().unwrap();
     }
 
     /// 优化图片
@@ -223,5 +250,5 @@ struct Work {
     // 工作状态
     status: WorkStatus,
     // 工作进度
-    progress: usize,
+    pub progress: usize,
 }
