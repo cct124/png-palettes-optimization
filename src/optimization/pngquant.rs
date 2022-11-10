@@ -262,6 +262,7 @@ impl<'a> Pngquant<'a> {
             encoder.set_palette(rbg_palette);
 
             if let Some(animation) = info.animation_control {
+                let id = self.id;
                 encoder
                     .set_animated(animation.num_frames, animation.num_plays)
                     .unwrap();
@@ -284,6 +285,12 @@ impl<'a> Pngquant<'a> {
                         writer.write_image_data(&pixels).unwrap(); // Save
                     }
                 }
+
+                // 结束工作发送总进度
+                let progress_sender = self.progress_sender.clone();
+                progress_sender
+                    .send(Progress { id, value: 110.00 })
+                    .unwrap();
             }
         }
     }
@@ -367,5 +374,10 @@ impl<'a> Pngquant<'a> {
 
         let mut writer = encoder.write_header().unwrap();
         writer.write_image_data(&pixels).unwrap(); // Save
+        let progress_sender = self.progress_sender.clone();
+        // 结束工作发送总进度
+        progress_sender
+            .send(Progress { id, value: 110.00 })
+            .unwrap();
     }
 }

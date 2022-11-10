@@ -128,7 +128,7 @@ impl<'a> Optimization<'a> {
     /// 执行数组中的工作任务
     fn run_worklist(&mut self) {
         let (progress_sender, progress_receiver) = mpsc::sync_channel(self.worklist.len());
-        let progress_total = (self.worklist.len() * 100) as f64;
+        let progress_total = (self.worklist.len() * 110) as f64;
         let pbstr = "\u{25A0}".repeat(20).to_string();
         let pbwid = "-".repeat(20).to_string();
 
