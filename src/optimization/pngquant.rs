@@ -118,6 +118,18 @@ impl<'a> Pngquant<'a> {
         // 因为要为多个图像生成一个共享调色板，所以要提前生成
         let mut attr = imagequant::new();
 
+        let sender = progress_sender.clone();
+
+        attr.set_progress_callback(move |progress| {
+            sender
+                .send(Progress {
+                    id,
+                    value: progress,
+                })
+                .unwrap();
+            imagequant::ControlFlow::Continue
+        });
+
         if let Some(speed) = speed {
             attr.set_speed(speed as i32).unwrap();
         }
@@ -299,7 +311,6 @@ impl<'a> Pngquant<'a> {
                 .unwrap();
             imagequant::ControlFlow::Continue
         });
-        println!("work: {}", id);
 
         if let Some(speed) = speed {
             attr.set_speed(speed as i32).unwrap();

@@ -4,6 +4,7 @@ use png::Compression;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io;
+use std::ops::Div;
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread::available_parallelism;
@@ -188,7 +189,6 @@ impl<'a> Optimization<'a> {
                 if let Some(work) = work {
                     // 改变工作进度
                     work.progress = progress.value.round() as usize;
-                    // println!("{:?}", work);
                 }
             }
 
@@ -198,7 +198,9 @@ impl<'a> Optimization<'a> {
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_millis();
-                println!("{}", current_time - self.start_time);
+
+                let second: f64 = ((current_time - self.start_time) as f64).div(1000.00);
+                println!("Total time: {}s", second);
                 // 退出循环
                 break;
             }
