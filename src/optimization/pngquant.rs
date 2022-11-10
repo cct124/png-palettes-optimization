@@ -142,7 +142,6 @@ impl<'a> Pngquant<'a> {
             (Some(quality_min), None) => attr.set_quality(quality_min, def_quality_max).unwrap(),
             (None, Some(quality_max)) => attr.set_quality(0, quality_max).unwrap(),
             (None, None) => attr.set_quality(0, def_quality_max).unwrap(),
-            _ => {}
         }
 
         let mut histogram = imagequant::Histogram::new(&attr);
@@ -331,7 +330,6 @@ impl<'a> Pngquant<'a> {
             }
             (None, Some(quality_max)) => attr.set_quality(0, quality_max).unwrap(),
             (None, None) => attr.set_quality(0, self.def_quality_max).unwrap(),
-            _ => {}
         }
 
         // Describe the bitmap

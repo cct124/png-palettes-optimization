@@ -1,4 +1,3 @@
-use imagequant::RGBA;
 use png;
 
 #[derive(Debug)]
