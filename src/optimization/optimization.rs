@@ -5,9 +5,9 @@ use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io;
 use std::path::Path;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread::available_parallelism;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
 pub struct Optimization<'a> {
@@ -33,6 +33,8 @@ pub struct Optimization<'a> {
     end_num: usize,
     /// png编码压缩等级
     compression: Compression,
+    /// 工作开始时间
+    start_time: u128,
 }
 
 impl<'a> Optimization<'a> {
@@ -49,6 +51,11 @@ impl<'a> Optimization<'a> {
         // 根据并行资源数量创建线程池
         let thread_pool = ThreadPool::new(available_parallelism);
 
+        let start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
         Optimization {
             path,
             speed,
@@ -60,6 +67,7 @@ impl<'a> Optimization<'a> {
             end_num: 0,
             dithering_level: Some(dithering_level.unwrap_or(1.0)),
             compression,
+            start_time,
         }
     }
 
@@ -91,6 +99,7 @@ impl<'a> Optimization<'a> {
                 id: paths.len(),
                 path: entry,
                 status: WorkStatus::INIT,
+                progress: 0,
             })
         }
     }
@@ -117,6 +126,8 @@ impl<'a> Optimization<'a> {
 
     /// 执行数组中的工作任务
     fn run_worklist(&mut self) {
+        let (progress_sender, progress_receiver) = mpsc::sync_channel(self.worklist.len());
+
         // 主线程循环不断检查工作任务状态
         loop {
             for work in self.worklist.iter_mut() {
@@ -130,15 +141,19 @@ impl<'a> Optimization<'a> {
                     let quality_min = self.quality_min;
                     let dithering_level = self.dithering_level;
                     let compression = self.compression;
+                    let progress_sender = progress_sender.clone();
+                    let id = work.id;
                     // 多线程执行工作任务
                     self.thread_pool.execute(
                         move || {
                             if let Ok(pngquant) = Pngquant::new(
+                                id,
                                 &path,
                                 speed,
                                 quality_min,
                                 quality_max,
                                 dithering_level,
+                                progress_sender,
                             )
                             .as_mut()
                             {
@@ -168,8 +183,22 @@ impl<'a> Optimization<'a> {
                 }
             };
 
+            if let Ok(progress) = progress_receiver.try_recv() {
+                let work = self.worklist.iter_mut().find(|work| work.id == progress.id);
+                if let Some(work) = work {
+                    // 改变工作进度
+                    work.progress = progress.value.round() as usize;
+                    // println!("{:?}", work);
+                }
+            }
+
             // 判断是否所有任务已完成
             if self.worklist.len() == self.end_num {
+                let current_time = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+                println!("{}", current_time - self.start_time);
                 // 退出循环
                 break;
             }
@@ -191,4 +220,6 @@ struct Work {
     path: DirEntry,
     // 工作状态
     status: WorkStatus,
+    // 工作进度
+    progress: usize,
 }

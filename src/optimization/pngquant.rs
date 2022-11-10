@@ -1,17 +1,19 @@
 use imagequant::Histogram;
 use png::{ColorType, Compression, Decoder, Reader};
-use std::{
-    fs::File,
-    io::BufWriter,
-    path::Path,
-    sync::{atomic::AtomicUsize, Arc, Mutex},
-};
+use std::{fs::File, io::BufWriter, path::Path, sync::mpsc::SyncSender};
 
 use super::Frame;
 use crate::error::Error;
 
+#[derive(Debug)]
+pub struct Progress {
+    pub id: usize,
+    pub value: f32,
+}
+
 /// PNG优化结构体
 pub struct Pngquant<'a> {
+    id: usize,
     /// png文件路径
     pub path: &'a Path,
     reader: Reader<File>,
@@ -25,15 +27,18 @@ pub struct Pngquant<'a> {
     def_quality_max: u8,
     /// 平滑图像参数
     dithering_level: Option<f32>,
+    progress_sender: SyncSender<Progress>,
 }
 
 impl<'a> Pngquant<'a> {
     pub fn new(
+        id: usize,
         path: &'a Path,
         speed: Option<u8>,
         quality_min: Option<u8>,
         quality_max: Option<u8>,
         dithering_level: Option<f32>,
+        progress_sender: SyncSender<Progress>,
     ) -> Result<Pngquant<'a>, Error> {
         let decoder = Decoder::new(File::open(path).unwrap());
         let reader = decoder.read_info().unwrap();
@@ -45,6 +50,7 @@ impl<'a> Pngquant<'a> {
                 // 是否是apng
                 if info.is_animated() {
                     Ok(Pngquant::decoder_rgba_apng(
+                        id,
                         path,
                         reader,
                         speed,
@@ -52,13 +58,16 @@ impl<'a> Pngquant<'a> {
                         quality_max,
                         def_quality_max,
                         dithering_level,
+                        progress_sender,
                     ))
                 } else {
                     Ok(Pngquant::decoder_rgba_png(
+                        id,
                         path,
                         reader,
                         def_quality_max,
                         dithering_level,
+                        progress_sender,
                     ))
                 }
             }
@@ -69,15 +78,18 @@ impl<'a> Pngquant<'a> {
 
     /// 解码rgba的图像数据
     fn decoder_rgba_png(
+        id: usize,
         path: &'a Path,
         mut reader: Reader<File>,
         def_quality_max: u8,
         dithering_level: Option<f32>,
+        progress_sender: SyncSender<Progress>,
     ) -> Pngquant<'a> {
         let mut buf = vec![0; reader.output_buffer_size()];
         let output_info = reader.next_frame(&mut buf).unwrap();
         let bytes = Some(rgb::FromSlice::as_rgba(&buf[..output_info.buffer_size()]).to_vec());
         Pngquant {
+            id,
             path,
             reader,
             bytes,
@@ -86,11 +98,13 @@ impl<'a> Pngquant<'a> {
             imagequant_attr: None,
             def_quality_max,
             dithering_level,
+            progress_sender,
         }
     }
 
     /// 解码rgba的apng图像数据
     fn decoder_rgba_apng(
+        id: usize,
         path: &'a Path,
         mut reader: Reader<File>,
         speed: Option<u8>,
@@ -98,6 +112,7 @@ impl<'a> Pngquant<'a> {
         quality_max: Option<u8>,
         def_quality_max: u8,
         dithering_level: Option<f32>,
+        progress_sender: SyncSender<Progress>,
     ) -> Pngquant<'a> {
         let mut frames: Vec<Frame> = vec![];
         // 因为要为多个图像生成一个共享调色板，所以要提前生成
@@ -154,6 +169,7 @@ impl<'a> Pngquant<'a> {
         }
 
         Pngquant {
+            id,
             path,
             reader,
             bytes: None,
@@ -162,6 +178,7 @@ impl<'a> Pngquant<'a> {
             imagequant_attr: Some(attr),
             def_quality_max,
             dithering_level,
+            progress_sender,
         }
     }
 
@@ -270,7 +287,19 @@ impl<'a> Pngquant<'a> {
     ) {
         let info = self.reader.info();
         let mut attr = imagequant::new();
-        attr.set_progress_callback(move |progress| imagequant::ControlFlow::Continue);
+        let progress_sender = self.progress_sender.clone();
+        let id = self.id;
+
+        attr.set_progress_callback(move |progress| {
+            progress_sender
+                .send(Progress {
+                    id,
+                    value: progress,
+                })
+                .unwrap();
+            imagequant::ControlFlow::Continue
+        });
+        println!("work: {}", id);
 
         if let Some(speed) = speed {
             attr.set_speed(speed as i32).unwrap();
