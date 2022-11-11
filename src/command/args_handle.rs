@@ -51,9 +51,7 @@ struct Args {
     compression: Option<Compression>,
 }
 
-/**
- * # 处理命令行参数
- */
+/// 处理命令行参数
 pub fn args_handle<'a>() {
     // 获取命令行参数
     let args = Args::parse();
@@ -66,7 +64,7 @@ pub fn args_handle<'a>() {
     };
 
     // 设置压缩等级
-    
+
     let compression = match args.compression {
         Some(Compression::Fast) => png::Compression::Fast,
         Some(Compression::Equal) => png::Compression::Best,

@@ -1,5 +1,6 @@
 use super::Pngquant;
-use crate::thread::{ThreadPool, WorkStatus};
+use crate::thread::ThreadPool;
+use crate::{BYTES_INTEGER, SECOND_CONSTANT};
 use png::Compression;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
@@ -101,6 +102,8 @@ impl<'a> Optimization<'a> {
                 path: entry,
                 status: WorkStatus::INIT,
                 progress: 0,
+                original_size: 0,
+                size: 0,
             })
         }
     }
@@ -128,6 +131,8 @@ impl<'a> Optimization<'a> {
     /// 执行数组中的工作任务
     fn run_worklist(&mut self) {
         let (progress_sender, progress_receiver) = mpsc::sync_channel(self.worklist.len());
+        let (status_sender, status_receiver) = mpsc::channel::<Status>();
+
         let progress_total = (self.worklist.len() * 110) as f64;
         let pbstr = "\u{25A0}".repeat(20).to_string();
         let pbwid = "-".repeat(20).to_string();
@@ -146,43 +151,54 @@ impl<'a> Optimization<'a> {
                     let dithering_level = self.dithering_level;
                     let compression = self.compression;
                     let progress_sender = progress_sender.clone();
+                    let status_sender = status_sender.clone();
                     let id = work.id;
                     // 多线程执行工作任务
-                    self.thread_pool.execute(
-                        move || {
-                            if let Ok(pngquant) = Pngquant::new(
-                                id,
-                                &path,
+                    self.thread_pool.execute(move || {
+                        if let Ok(pngquant) = Pngquant::new(
+                            id,
+                            &path,
+                            speed,
+                            quality_min,
+                            quality_max,
+                            dithering_level,
+                            progress_sender,
+                        )
+                        .as_mut()
+                        {
+                            // 执行编码覆盖原文件
+                            pngquant.encoder(
+                                pngquant.path,
                                 speed,
                                 quality_min,
                                 quality_max,
-                                dithering_level,
-                                progress_sender,
-                            )
-                            .as_mut()
-                            {
-                                // 执行编码覆盖原文件
-                                pngquant.encoder(
-                                    pngquant.path,
-                                    speed,
-                                    quality_min,
-                                    quality_max,
-                                    compression,
-                                );
-                            }
-                        },
-                        work.id,
-                    )
+                                compression,
+                            );
+                            let original_size = pngquant.original_size.unwrap();
+                            let size = pngquant.size.unwrap();
+                            // 向主线程发送当前工作结束消息
+                            status_sender
+                                .send(Status {
+                                    id,
+                                    status: WorkStatus::End,
+                                    original_size,
+                                    size,
+                                })
+                                .unwrap();
+                        }
+                    })
                 }
             }
 
             // 检查通道消息，执行工作的线程任务结束后将发消息到此通道
-            if let Ok(status) = self.thread_pool.status_receiver.try_recv() {
+            if let Ok(status) = status_receiver.try_recv() {
                 // 确定是哪个工作任务发出的消息
                 let work = self.worklist.iter_mut().find(|work| work.id == status.id);
                 if let Some(work) = work {
                     // 将工作任务状态改为已结束
                     work.status = WorkStatus::End;
+                    work.original_size = status.original_size;
+                    work.size = status.size;
                     self.end_num += 1;
                 }
             };
@@ -199,14 +215,40 @@ impl<'a> Optimization<'a> {
             // 判断是否所有任务已完成
             if self.worklist.len() == self.end_num {
                 self.update_progress_bar(progress_total, &pbstr, &pbwid);
+                print!("\n");
 
+                // 压缩前总大小
+                let total_original_size = ((self
+                    .worklist
+                    .iter()
+                    .map(move |f| f.original_size)
+                    .fold(0, |acc, x| acc + x) as f64)
+                    / BYTES_INTEGER)
+                    .round();
+                // 压缩后总大小
+                let total_size = ((self
+                    .worklist
+                    .iter()
+                    .map(move |f| f.size)
+                    .fold(0, |acc, x| acc + x) as f64)
+                    / BYTES_INTEGER)
+                    .round();
+                // 总减少大小
+                let decrease_size = total_original_size - total_size;
+
+                println!(
+                    "Total file size change: {}KB -> {}KB\nTotal decrease: {}KB",
+                    total_original_size, total_size, decrease_size
+                );
+
+                // 获取当前时间
                 let current_time = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_millis();
+                // 总耗时
+                let second: f64 = ((current_time - self.start_time) as f64).div(SECOND_CONSTANT);
 
-                let second: f64 = ((current_time - self.start_time) as f64).div(1000.00);
-                print!("\n");
                 println!("Total time: {}s", second);
                 println!("Complete all work");
                 // 退出循环
@@ -251,4 +293,31 @@ struct Work {
     status: WorkStatus,
     // 工作进度
     pub progress: usize,
+    /// 源文件大小
+    pub original_size: u64,
+    /// 压缩文件大小
+    pub size: u64,
+}
+
+/// 工作任务状态
+#[derive(Debug)]
+pub enum WorkStatus {
+    /// 初始化
+    INIT,
+    /// 结束
+    End,
+    /// 正在执行
+    WAIT,
+}
+
+#[derive(Debug)]
+pub struct Status {
+    /// 工作id
+    pub id: usize,
+    /// 工作任务状态
+    pub status: WorkStatus,
+    /// 源文件大小
+    pub original_size: u64,
+    /// 压缩文件大小
+    pub size: u64,
 }

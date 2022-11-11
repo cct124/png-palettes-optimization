@@ -4,32 +4,14 @@ use std::sync::Mutex;
 use std::thread;
 
 enum Message {
-    NewJob(Job, usize),
+    NewJob(Job),
     Terminate,
-}
-
-/// 工作任务状态
-#[derive(Debug)]
-pub enum WorkStatus {
-    /// 初始化
-    INIT,
-    /// 结束
-    End,
-    /// 正在执行
-    WAIT,
-}
-
-#[derive(Debug)]
-pub struct Status {
-    pub id: usize,
-    pub status: WorkStatus,
 }
 
 #[derive(Debug)]
 pub struct ThreadPool {
     workers: Vec<Worker>,
     job_sender: mpsc::Sender<Message>,
-    pub status_receiver: mpsc::Receiver<Status>,
 }
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -37,7 +19,7 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 impl ThreadPool {
     /// 创建线程池。
     ///
-    /// 线程池中线程的数量。
+    /// `size`线程池中线程的数量。
     ///
     /// # Panics
     ///
@@ -45,63 +27,54 @@ impl ThreadPool {
     pub fn new(size: usize) -> ThreadPool {
         assert!(size > 0);
 
+        // 控制线程
         let (job_sender, job_receiver) = mpsc::channel();
-        let (status_sender, status_receiver) = mpsc::channel();
 
         let job_receiver = Arc::new(Mutex::new(job_receiver));
 
         let mut workers = Vec::with_capacity(size);
 
         for id in 0..size {
-            workers.push(Worker::new(
-                id,
-                Arc::clone(&job_receiver),
-                status_sender.clone(),
-            ));
+            workers.push(Worker::new(id, Arc::clone(&job_receiver)));
         }
 
         ThreadPool {
             workers,
             job_sender,
-            status_receiver,
         }
     }
 
-    pub fn execute<F>(&self, f: F, work_id: usize)
+    // 需要在多线程中执行的闭包函数
+    pub fn execute<F>(&self, f: F)
     where
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-        self.job_sender.send(Message::NewJob(job, work_id)).unwrap();
+        self.job_sender.send(Message::NewJob(job)).unwrap();
     }
 }
 
+/// 工作任务
 #[derive(Debug)]
 struct Worker {
+    /// 工作线程id
     id: usize,
+    /// 保存创建的线程
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Worker {
-    fn new(
-        id: usize,
-        receiver: Arc<Mutex<mpsc::Receiver<Message>>>,
-        status_sender: mpsc::Sender<Status>,
-    ) -> Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
         let thread = thread::spawn(move || loop {
+            // 锁定接受者对象用于获取数据，尝试等待此接收者上的值阻塞当前线程，自动分配线程池的核心功能
             let message = receiver.lock().unwrap().recv().unwrap();
 
             match message {
-                Message::NewJob(job, work_id) => {
+                // 工作消息执行工作
+                Message::NewJob(job) => {
                     job();
-                    status_sender
-                        .send(Status {
-                            id: work_id,
-                            status: WorkStatus::End,
-                        })
-                        .unwrap();
                 }
-
+                // 关闭线程消息
                 Message::Terminate => break,
             }
         });
@@ -113,6 +86,7 @@ impl Worker {
 }
 
 impl Drop for ThreadPool {
+    // 在清理数据时结束线程
     fn drop(&mut self) {
         for _ in &self.workers {
             self.job_sender.send(Message::Terminate).unwrap();

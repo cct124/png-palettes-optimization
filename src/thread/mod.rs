@@ -1,3 +1,3 @@
 mod thread_pool;
 
-pub use thread_pool::{ThreadPool, WorkStatus};
+pub use thread_pool::ThreadPool;
