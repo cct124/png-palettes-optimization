@@ -1,11 +1,12 @@
 use super::Pngquant;
 use crate::thread::ThreadPool;
 use crate::{BYTES_INTEGER, SECOND_CONSTANT};
+use colored::*;
 use png::Compression;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io::{self, Write};
-use std::ops::Div;
+use std::ops::{Add, Div};
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread::available_parallelism;
@@ -37,6 +38,8 @@ pub struct Optimization<'a> {
     compression: Compression,
     /// 工作开始时间
     start_time: u128,
+    /// 处理的文件数量
+    process_file_num: usize,
 }
 
 impl<'a> Optimization<'a> {
@@ -70,6 +73,7 @@ impl<'a> Optimization<'a> {
             dithering_level: Some(dithering_level.unwrap_or(1.0)),
             compression,
             start_time,
+            process_file_num: 0,
         }
     }
 
@@ -185,20 +189,39 @@ impl<'a> Optimization<'a> {
                                     size,
                                 })
                                 .unwrap();
+                        } else {
+                            status_sender
+                                .send(Status {
+                                    id,
+                                    status: WorkStatus::UNHANDLED,
+                                    original_size: 0,
+                                    size: 0,
+                                })
+                                .unwrap();
                         }
                     })
                 }
             }
 
             // 检查通道消息，执行工作的线程任务结束后将发消息到此通道
-            if let Ok(status) = status_receiver.try_recv() {
+            if let Ok(message) = status_receiver.try_recv() {
                 // 确定是哪个工作任务发出的消息
-                let work = self.worklist.iter_mut().find(|work| work.id == status.id);
+                let work = self.worklist.iter_mut().find(|work| work.id == message.id);
                 if let Some(work) = work {
-                    // 将工作任务状态改为已结束
-                    work.status = WorkStatus::End;
-                    work.original_size = status.original_size;
-                    work.size = status.size;
+                    match message.status {
+                        WorkStatus::End => {
+                            // 将工作任务状态改为已结束
+                            work.status = WorkStatus::End;
+                            work.original_size = message.original_size;
+                            work.size = message.size;
+                            self.process_file_num += 1;
+                        }
+                        WorkStatus::UNHANDLED => {
+                            // 将工作任务状态改为已结束
+                            work.status = WorkStatus::UNHANDLED;
+                        }
+                        _ => {}
+                    }
                     self.end_num += 1;
                 }
             };
@@ -217,40 +240,16 @@ impl<'a> Optimization<'a> {
                 self.update_progress_bar(progress_total, &pbstr, &pbwid);
                 print!("\n");
 
-                // 压缩前总大小
-                let total_original_size = ((self
-                    .worklist
-                    .iter()
-                    .map(move |f| f.original_size)
-                    .fold(0, |acc, x| acc + x) as f64)
-                    / BYTES_INTEGER)
-                    .round();
-                // 压缩后总大小
-                let total_size = ((self
-                    .worklist
-                    .iter()
-                    .map(move |f| f.size)
-                    .fold(0, |acc, x| acc + x) as f64)
-                    / BYTES_INTEGER)
-                    .round();
-                // 总减少大小
-                let decrease_size = total_original_size - total_size;
-
                 println!(
-                    "Total file size change: {}KB -> {}KB\nTotal decrease: {}KB",
-                    total_original_size, total_size, decrease_size
+                    "Process the file: {}",
+                    self.process_file_num.to_string().green()
                 );
 
-                // 获取当前时间
-                let current_time = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis();
-                // 总耗时
-                let second: f64 = ((current_time - self.start_time) as f64).div(SECOND_CONSTANT);
+                self.size_change_line();
 
-                println!("Total time: {}s", second);
-                println!("Complete all work");
+                self.total_time_line();
+
+                println!("Complete all work!");
                 // 退出循环
                 break;
             }
@@ -266,14 +265,53 @@ impl<'a> Optimization<'a> {
             .fold(0, |acc, x| acc + x) as f64;
         let perc = current_value / progress_total;
         let lpad = (perc * 20.00).floor();
-
-        print!(
-            "\rProcessing data: {}{} {}%",
-            &pbstr[0..'\u{25A0}'.len_utf8() * (lpad.trunc() as usize)],
-            &pbwid[0..((20.0 - lpad).trunc() as usize)],
-            (perc * 100.0).trunc()
-        );
+        let pbstr = &pbstr[0..'\u{25A0}'.len_utf8() * (lpad.trunc() as usize)].green();
+        let pbwid = &pbwid[0..((20.0 - lpad).trunc() as usize)].green();
+        let perc = (perc * 100.0).trunc().to_string().add("%").green();
+        print!("\rProcessing data: {}{} {}", pbstr, pbwid, perc);
         io::stdout().flush().unwrap();
+    }
+
+    /// 输出文件大小变化
+    fn size_change_line(&self) {
+        // 压缩前总大小
+        let total_original_size = ((self
+            .worklist
+            .iter()
+            .map(move |f| f.original_size)
+            .fold(0, |acc, x| acc + x) as f64)
+            / BYTES_INTEGER)
+            .round();
+        // 压缩后总大小
+        let total_size = ((self
+            .worklist
+            .iter()
+            .map(move |f| f.size)
+            .fold(0, |acc, x| acc + x) as f64)
+            / BYTES_INTEGER)
+            .round();
+        // 总减少大小
+        let decrease_size = total_original_size - total_size;
+        let decrease_size = decrease_size.to_string().add("KB");
+        let change = format!("{}KB -> {}KB", total_original_size, total_size).green();
+        println!(
+            "Total file size change: {}\nTotal decrease: {}",
+            change,
+            decrease_size.green()
+        );
+    }
+
+    fn total_time_line(&self) {
+        // 获取当前时间
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        // 总耗时
+        let second: f64 = ((current_time - self.start_time) as f64).div(SECOND_CONSTANT);
+        let second = second.to_string().add("s");
+
+        println!("Total time: {}", second.green());
     }
 
     /// 优化图片
@@ -308,6 +346,8 @@ pub enum WorkStatus {
     End,
     /// 正在执行
     WAIT,
+    /// 未处理，不支持的png格式
+    UNHANDLED,
 }
 
 #[derive(Debug)]

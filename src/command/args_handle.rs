@@ -68,7 +68,7 @@ pub fn args_handle<'a>() {
     let compression = match args.compression {
         Some(Compression::Fast) => png::Compression::Fast,
         Some(Compression::Equal) => png::Compression::Best,
-        (_) => png::Compression::Best,
+        _ => png::Compression::Best,
     };
 
     // 实例化优化结构体
