@@ -126,6 +126,8 @@ impl<'a> Optimization<'a> {
 
     /// 生成工作列表
     fn generate_worklist(&mut self) {
+        // 输出工作路径
+        println!("Work Path: {}", self.path.to_str().unwrap().green());
         let mut paths: Vec<Work> = vec![];
         self.visit_dirs(self.path, &mut |entry| self.iterate_pngs(entry, &mut paths))
             .unwrap();
