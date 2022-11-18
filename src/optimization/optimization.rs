@@ -1,6 +1,7 @@
 use super::Pngquant;
 use crate::thread::ThreadPool;
 use crate::{BYTES_INTEGER, SECOND_CONSTANT};
+use clap::builder::Str;
 use colored::*;
 use png::Compression;
 use std::ffi::OsStr;
@@ -14,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
 pub struct Optimization<'a> {
-    /// 优化器工作路径
+    /// 工作路径
     path: &'a Path,
     /// `1-10`.
     ///更快的速度生成的图像质量更低，用于实时生成图像。
@@ -40,6 +41,8 @@ pub struct Optimization<'a> {
     start_time: u128,
     /// 处理的文件数量
     process_file_num: usize,
+    /// 扫描PNG时排除的文件
+    exclude: Option<Vec<String>>,
 }
 
 impl<'a> Optimization<'a> {
@@ -50,6 +53,7 @@ impl<'a> Optimization<'a> {
         quality_max: Option<u8>,
         dithering_level: Option<f32>,
         compression: Compression,
+        exclude: Option<Vec<String>>,
     ) -> Optimization {
         // 系统并行资源
         let available_parallelism = available_parallelism().unwrap().get();
@@ -74,6 +78,7 @@ impl<'a> Optimization<'a> {
             compression,
             start_time,
             process_file_num: 0,
+            exclude,
         }
     }
 
@@ -112,8 +117,16 @@ impl<'a> Optimization<'a> {
         }
     }
 
-    /// 检查文件扩展名
+    /// 检查文件扩展名以及需要排除的文件
     fn has_extension(&self, path: &Path) -> bool {
+        
+        if let Some(exclude) = &self.exclude {
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+            if exclude.iter().any(|f| f == file_name) {
+                return false;
+            };
+        }
+
         if let Some(ref extension) = path.extension().and_then(OsStr::to_str) {
             return self
                 .extension

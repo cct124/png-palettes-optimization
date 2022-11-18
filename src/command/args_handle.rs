@@ -49,6 +49,9 @@ struct Args {
         help = "施加压缩的类型和强度，三种类型default、fast、equal，默认default，最好的压缩但时间会更长"
     )]
     compression: Option<Compression>,
+
+    #[arg(short = 'e', long, help = "压缩时需要排除的文件，传入PNG文件名")]
+    exclude: Option<Vec<String>>,
 }
 
 /// 处理命令行参数
@@ -71,6 +74,7 @@ pub fn args_handle<'a>() {
         _ => png::Compression::Best,
     };
 
+
     // 实例化优化结构体
     let mut optimization = Optimization::new(
         &path,
@@ -79,6 +83,7 @@ pub fn args_handle<'a>() {
         args.quality_max,
         args.dithering_level,
         compression,
+        args.exclude,
     );
     // 优化压缩png图像
     optimization.quality();
