@@ -1,7 +1,12 @@
 [package]
+authors = ["Jane <huangdonghao1997@gmail.com>"]
+description = "将 PNG 图像的 RGBA 模式转为调色板模式，从而减小图像大小。目前压缩只压缩 RGBA 模式的图像，调色板模式将跳过。这是一个多线程有损PNG图像压缩工具。"
 edition = "2021"
+license = "GPL-3.0-or-later"
 name = "png-palettes-optimization"
-version = "0.1.0"
+readme = "README.md"
+repository = "https://github.com/cct124/png-palettes-optimization"
+version = "0.1.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
