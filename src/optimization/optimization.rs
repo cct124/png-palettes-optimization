@@ -119,7 +119,6 @@ impl<'a> Optimization<'a> {
 
     /// 检查文件扩展名以及需要排除的文件
     fn has_extension(&self, path: &Path) -> bool {
-        
         if let Some(exclude) = &self.exclude {
             let file_name = path.file_name().unwrap().to_str().unwrap();
             if exclude.iter().any(|f| f == file_name) {
@@ -140,7 +139,7 @@ impl<'a> Optimization<'a> {
     /// 生成工作列表
     fn generate_worklist(&mut self) {
         // 输出工作路径
-        println!("Work Path: {}", self.path.to_str().unwrap().green());
+        println!("work Path: {}", self.path.to_str().unwrap().green());
         let mut paths: Vec<Work> = vec![];
         self.visit_dirs(self.path, &mut |entry| self.iterate_pngs(entry, &mut paths))
             .unwrap();
@@ -256,7 +255,7 @@ impl<'a> Optimization<'a> {
                 print!("\n");
 
                 println!(
-                    "Process the file: {}",
+                    "process the file: {}",
                     self.process_file_num.to_string().green()
                 );
 
@@ -264,7 +263,7 @@ impl<'a> Optimization<'a> {
 
                 self.total_time_line();
 
-                println!("Complete all work!");
+                println!("complete all work!");
                 // 退出循环
                 break;
             }
@@ -283,7 +282,7 @@ impl<'a> Optimization<'a> {
         let pbstr = &pbstr[0..'\u{25A0}'.len_utf8() * (lpad.trunc() as usize)].green();
         let pbwid = &pbwid[0..((20.0 - lpad).trunc() as usize)].green();
         let perc = (perc * 100.0).trunc().to_string().add("%").green();
-        print!("\rProcessing data: {}{} {}", pbstr, pbwid, perc);
+        print!("\rprocessing data: {}{} {}", pbstr, pbwid, perc);
         io::stdout().flush().unwrap();
     }
 
@@ -306,11 +305,11 @@ impl<'a> Optimization<'a> {
             / BYTES_INTEGER)
             .round();
         // 总减少大小
-        let decrease_size = total_original_size - total_size;
-        let decrease_size = decrease_size.to_string().add("KB");
+        let decrease_size = 100 - ((total_size / total_original_size) * 100.00) as usize;
+        let decrease_size = decrease_size.to_string().add("%");
         let change = format!("{}KB -> {}KB", total_original_size, total_size).green();
         println!(
-            "Total file size change: {}\nTotal decrease: {}",
+            "total file size change: {}\ntotal decrease: {}",
             change,
             decrease_size.green()
         );
@@ -326,7 +325,7 @@ impl<'a> Optimization<'a> {
         let second: f64 = ((current_time - self.start_time) as f64).div(SECOND_CONSTANT);
         let second = second.to_string().add("s");
 
-        println!("Total time: {}", second.green());
+        println!("total time: {}", second.green());
     }
 
     /// 优化图片
